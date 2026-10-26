@@ -5,6 +5,7 @@
 start_link(Count, Alfa) when Count > 0 ->
     Pids = create_processes(Count, []),
     set_neighbor_threads(Pids, Pids),
+    Alfa,
     % FALTA VERIFICAR ALGO CON EL ALFA NO SE QUE
     {ok, Pids}.
 
@@ -48,7 +49,6 @@ put(Pid, Key, Value) ->
 -spec put(pid(), term(), term(), non_neg_integer() | infinity) -> ok.
 put(Pid, Key, Value, TTL) when (is_integer(TTL) andalso TTL >= 0) orelse TTL =:= infinity ->
     Pid ! {put, Key, Value, TTL, self()},
-    propagate_put(Pid, Key, Value),
     receive
         ok -> ok
     end.
@@ -63,9 +63,6 @@ delete(Pid, Key) ->
 
 propagate_delete(Pid, Key) ->
     Pid ! {propagate, delete, Key}.
-
-propagate_put(Pid, Key, Value) ->
-    Pid ! {propagate, put, Key, Value}.
 
 -spec get(pid(), term()) -> {ok, term()} | not_found.
 get(Pid, Key) ->

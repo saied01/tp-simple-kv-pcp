@@ -10,18 +10,28 @@ lifecycle(Database, NeighborThreads) ->
 
         % put
         {put, Key, Value, TTL, SenderPid} ->
-            UpdatedDatabase = maps:put(Key, Value, Database),
+            Timestamp = {erlang:system_time(microsecond), self()},
+            UpdatedDatabase = maps:put(Key, {Value, Timestamp}, Database),
             SenderPid ! ok,
+
             if TTL =/= infinity ->
-              erlang:send_after(TTL, self(), {ttl_expired, Key});
-              true -> ok
+                erlang:send_after(TTL, self(), {ttl_expired, Key});
+               true -> ok
             end,
+
+          % propagate put
+            lists:foreach(fun(NeighborPid) -> 
+                if NeighborPid =/= self() ->
+                  NeighborPid ! {silent_put, Key, Value, Timestamp};
+                  true -> ok
+                end
+            end, NeighborThreads),
             lifecycle(UpdatedDatabase, NeighborThreads);
             
         % get
         {get, Key, SenderPid} ->
             case maps:find(Key, Database) of
-                {ok, Value} ->
+                {ok, {Value, _}} ->
                     SenderPid ! {ok, Value};
                 error ->
                     SenderPid ! not_found
@@ -48,19 +58,14 @@ lifecycle(Database, NeighborThreads) ->
             lifecycle(UpdatedDatabase, NeighborThreads);
 
         % put for propagation
-        {silent_put, Key, Value} -> 
-            UpdatedDatabase = maps:put(Key, Value, Database),
+        {silent_put, Key, Value, ComingTimestamp} -> 
+            UpdatedDatabase = case maps:find(Key, Database) of
+                {ok, {_OldValue, Timestamp}} when ComingTimestamp < Timestamp ->
+                  Database;
+                _ ->
+                  maps:put(Key, {Value, ComingTimestamp}, Database)
+            end,
             lifecycle(UpdatedDatabase, NeighborThreads);
-        
-        % propagate put
-        {propagate, put, Key, Value} ->
-            lists:foreach(fun(NeighborPid) -> 
-                if NeighborPid =/= self() ->
-                  NeighborPid ! {silent_put, Key, Value};
-                  true -> ok
-                end
-            end, NeighborThreads),
-            lifecycle(Database, NeighborThreads);
 
         %  propagate delete
         {propagate, delete, Key} ->
@@ -71,11 +76,6 @@ lifecycle(Database, NeighborThreads) ->
                 end
             end, NeighborThreads),
             lifecycle(Database, NeighborThreads);
-
-
-        %  propagation
-        {update_propagated_db, DB} ->
-            lifecycle(DB, NeighborThreads);
 
         % stop
         {stop, SenderPid} ->
