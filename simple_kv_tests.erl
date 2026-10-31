@@ -108,27 +108,29 @@ alpha_deletion_and_test() ->
 % TEST 5: una replica consulta el valor de otra si su valor no esta disponible
 concurrent_distributed_get_test() ->
     {ok, [N1, N2, N3, N4]} = simple_kv:start_link(4, 10),
+
+    Parent = self(),
     
     spawn(fun() ->
         ok = simple_kv:put(N1, k1, v1),
-        self() ! {done, h1}
+        Parent ! {done, h1}
     end),
     
     spawn(fun() ->
         ok = simple_kv:put(N2, k2, v2),
-        self() ! {done, h2}
+        Parent ! {done, h2}
     end),
     
     spawn(fun() ->
         ok = simple_kv:put(N3, k3, v3),
-        self() ! {done, h3}
+        Parent ! {done, h3}
     end),
     
     % la idea es que aunque no haya llegado la replicacion a N4, del valor v2, este lo consigue de un neighbor,
     % por lo que el test nunca falla
     spawn(fun() ->
         Result = simple_kv:get(N4, k_no_existente), % o k3 si quieres testear el timing estricto
-        self() ! {result, h4, Result}
+        Parent ! {result, h4, Result}
     end),
     
     receive {result, h4, Res4} -> ?assertEqual(not_found, Res4) end,

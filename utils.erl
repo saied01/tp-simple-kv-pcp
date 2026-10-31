@@ -68,13 +68,14 @@ enforce_alpha(Database, Alpha, NeighborThreads) ->
 
 
 query_neighbors_for_get(Key, Neighbors) ->
-    % Enviar un mensaje de get a todos los vecinos
     lists:foreach(fun(Pid) -> 
-        Pid ! {get_no_propagate, Key, self()} 
+        if Pid =/= self() ->
+            Pid ! {get_no_propagate, Key, self()};
+            true -> ok
+        end
     end, Neighbors),
     
-    % Recolectar respuestas de los vecinos
-    collect_responses(length(Neighbors)).
+    collect_responses(length(Neighbors) - 1).
 
 collect_responses(0) ->
     not_found;
