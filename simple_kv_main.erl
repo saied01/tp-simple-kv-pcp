@@ -8,11 +8,11 @@ lifecycle(Database, NeighborThreads, Alfa, ValidSize) ->
             lifecycle(Database, Pids, Alfa, ValidSize);
 
         % put
-        {put, Key, Value, TTL, SenderPid} ->
+        {put, Key, Value, TTL, SenderPid, Ref} ->
             Timestamp = {erlang:system_time(microsecond), self()},
             
             UpdatedDatabase = maps:put(Key, {Value, Timestamp}, Database),
-            SenderPid ! ok,
+            SenderPid ! {Ref, ok},
 
             if TTL =/= infinity ->
                 erlang:send_after(TTL, self(), {ttl_expired, Key});
@@ -37,34 +37,37 @@ lifecycle(Database, NeighborThreads, Alfa, ValidSize) ->
             lifecycle(FinalDatabase, NeighborThreads, Alfa, FinalSize);
             
         % get
-        {get, Key, SenderPid} ->
-            case maps:find(Key, Database) of
+        {get, Key, SenderPid, Ref} ->
+            Result = case maps:find(Key, Database) of
                 {ok, {tombstone, _}} ->
-                    SenderPid ! not_found;
+                    not_found;
                 {ok, {Value, _}} ->
-                    SenderPid ! {ok, Value};
+                    {ok, Value};
                 error ->
-                    Result = utils:query_neighbors_for_get(Key, NeighborThreads),
-                    SenderPid ! Result
+                    utils:query_neighbors_for_get(Key, NeighborThreads)
             end,
+
+            SenderPid ! {Ref, Result},
 
             lifecycle(Database, NeighborThreads, Alfa, ValidSize);
 
         % el mismo get solo que no propaga a otras replicas
-        {get_no_propagate, Key, SenderPid} ->
-            case maps:find(Key, Database) of
+        {get_no_propagate, Key, SenderPid, QueryRef} ->
+            Result = case maps:find(Key, Database) of
                 {ok, {tombstone, _}} ->
-                    SenderPid ! not_found;
+                         not_found;
                 {ok, {Value, _}} ->
-                    SenderPid ! {ok, Value};
+                         {ok, Value};
                 error ->
-                    SenderPid ! not_found
+                         not_found
             end,
+
+            SenderPid ! {QueryRef, Result},
 
             lifecycle(Database, NeighborThreads, Alfa, ValidSize);
     
         % delete
-        {delete, Key, SenderPid} ->
+        {delete, Key, SenderPid, Ref} ->
             Timestamp = {erlang:system_time(microsecond), self()},
             
             % Si borramos un valor vigente, disminuimos el ValidSize
@@ -77,7 +80,7 @@ lifecycle(Database, NeighborThreads, Alfa, ValidSize) ->
             UpdatedDatabase = maps:put(Key, {tombstone, Timestamp}, Database),
             NewSize = if WasValidValue -> ValidSize - 1; true -> ValidSize end,
             
-            SenderPid ! ok,
+            SenderPid ! {Ref, ok},
 
             % propagate delete
             lists:foreach(fun(NeighborPid) -> 

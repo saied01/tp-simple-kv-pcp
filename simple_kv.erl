@@ -20,24 +20,27 @@ put(Pid, Key, Value) ->
 
 -spec put(pid(), term(), term(), non_neg_integer() | infinity) -> ok.
 put(Pid, Key, Value, TTL) when (is_integer(TTL) andalso TTL >= 0) orelse TTL =:= infinity ->
-    Pid ! {put, Key, Value, TTL, self()},
+    Ref = make_ref(),
+    Pid ! {put, Key, Value, TTL, self(), Ref},
     receive
-        ok -> ok
+      {Ref, ok} -> ok
     end.
 
 
 -spec delete(pid(), term()) -> ok.
 delete(Pid, Key) ->
-    Pid ! {delete, Key, self()},
+    Ref = make_ref(),
+    Pid ! {delete, Key, self(), Ref},
     receive
-        ok -> ok
+      {Ref, ok} -> ok
     end.
 
 
 -spec get(pid(), term()) -> {ok, term()} | not_found.
 get(Pid, Key) ->
-    Pid ! {get, Key, self()},
+    Ref = make_ref(),
+    Pid ! {get, Key, self(), Ref},
     receive
-        {ok, Value} -> {ok, Value};
-        not_found -> not_found
+        {Ref, {ok, Value}} -> {ok, Value};
+        {Ref, not_found} -> not_found
     end.
