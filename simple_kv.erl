@@ -11,8 +11,6 @@ create_processes(0, Pids, _) ->
     Pids;
 create_processes(N, Pids, Alfa) ->
     Pid = spawn(fun() ->
-            % setteamos un scheduler que "limpie" los valores invalidos de la db
-            erlang:send_after(5000, self(), clean_tombstones),
             simple_kv_main:lifecycle(#{}, [], Alfa, 0)
     end),
     create_processes(N - 1, [Pid | Pids], Alfa).

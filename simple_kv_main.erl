@@ -94,23 +94,6 @@ lifecycle(Database, NeighborThreads, Alfa, ValidSize) ->
 
             lifecycle(UpdatedDatabase, NeighborThreads, Alfa, NewSize);
     
-        % clean tombstone scheduling
-        clean_tombstones ->
-            KeepPeriod = 10000,
-            Now = os:system_time(millisecond),
-
-            CleanedDatabase = maps:filter(fun
-                (_Key, {tombstone, Timestamp}) ->
-                    % No queremos remover la referencia de un valor recien borrado, ya que puede haber race condition
-                    (Now - Timestamp) < KeepPeriod;
-                (_Key, {_Value, _}) ->
-                    true
-            end, Database),
-
-            erlang:send_after(5000, self(), clean_tombstones),
-
-            lifecycle(CleanedDatabase, NeighborThreads, Alfa, ValidSize);
-
         % cuando un valor es borrado por alfa, se ofrece al resto, este lo acepta si puede y si no lo tiene ya
         {offer_key_value, Key, OfferedValue, OfferedTS} ->
             case maps:find(Key, Database) of

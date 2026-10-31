@@ -63,43 +63,42 @@ concurrent_writes_test() ->
 
     simple_kv:stop(Pids).
 
-% TEST 3: prevencion de escritura 'zombie' retrasada
+% TEST 3: prevencion de escritura 'zombie' retrasada (test de caja blanca, porque sino no se como hacerlo)
 zombie_data_prevention_test() ->
-    {ok, [P1, P2, P3]} = simple_kv:start_link(3, 50), 
-    
+    {ok, [P]} = simple_kv:start_link(1, 50),
     Key = color,
-    Value = rojo,
-    
-    lists:foreach(fun(_) -> 
-        spawn(fun() -> simple_kv:put(P1, Key, Value) end),
-        spawn(fun() -> simple_kv:delete(P2, Key) end)
-    end, lists:seq(1, 100)),
+    OldTS = {100, self()},
+    DeleteTS = {101, self()},
 
-    timer:sleep(300),
-    
-    % Función auxiliar de reintento para la consistencia eventual
-    CheckFun = fun Loop(Retries) ->
-        case simple_kv:get(P3, Key) of
-            not_found -> not_found;
-            {ok, _} when Retries > 0 ->
-                timer:sleep(20),
-                Loop(Retries - 1);
-            Other -> Other
-        end
-    end,
+    P ! {silent_put, Key, rojo, OldTS},
+    ?assertEqual({ok, rojo}, simple_kv:get(P, Key)),
 
-    Response = CheckFun(15),
-    ?assertEqual(not_found, Response),
-    simple_kv:stop([P1, P2, P3]).
+    P ! {silent_delete, Key, DeleteTS},
+    ?assertEqual(not_found, simple_kv:get(P, Key)),
+    
+    % Reentrega retrasada de una escritura anterior.
+    P ! {silent_put, Key, rojo, OldTS},
+    ?assertEqual(not_found, simple_kv:get(P, Key)),
+
+    % Una oferta vieja tampoco debe resucitar la clave.
+    P ! {offer_key_value, Key, rojo, OldTS},
+    ?assertEqual(not_found, simple_kv:get(P, Key)),
+
+    simple_kv:stop([P]).
 
 % TEST 4: borrado de valor por exceso de espacio (alfa)
-alpha_deletion_and_inheritance_test() ->
+alpha_deletion_and_test() ->
     {ok, [P1, P2]} = simple_kv:start_link(2, 2),
     simple_kv:put(P1, k1, v1),
     simple_kv:put(P1, k2, v2),
+
     timer:sleep(50),
+
     simple_kv:put(P1, k3, v3),
+
     timer:sleep(100),
+
     ?assertEqual(not_found, simple_kv:get(P1, k1)),
     ?assertEqual({ok, v1}, simple_kv:get(P2, k1)),
+
     simple_kv:stop([P1, P2]).
