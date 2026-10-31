@@ -26,35 +26,60 @@ lifecycle(Database, NeighborThreads) ->
                   true -> ok
                 end
             end, NeighborThreads),
+
             lifecycle(UpdatedDatabase, NeighborThreads);
             
         % get
         {get, Key, SenderPid} ->
             case maps:find(Key, Database) of
+                {ok, {tombstone, _}} ->
+                    SenderPid ! not_found;
                 {ok, {Value, _}} ->
                     SenderPid ! {ok, Value};
                 error ->
                     SenderPid ! not_found
             end,
+
             lifecycle(Database, NeighborThreads);
             
     
         % delete
         {delete, Key, SenderPid} ->
-            UpdatedDatabase = maps:remove(Key, Database),
+            Timestamp = {erlang:system_time(microsecond), self()},
+            UpdatedDatabase = maps:put(Key, {tombstone, Timestamp}, Database),
             SenderPid ! ok,
+
+            %  propagate delete
+            lists:foreach(fun(NeighborPid) -> 
+                if NeighborPid =/= self() ->
+                  NeighborPid ! {silent_delete, Key, Timestamp};
+                  true -> ok
+                end
+            end, NeighborThreads),
+
             lifecycle(UpdatedDatabase, NeighborThreads);
 
         % delete after ttl expiration
         {ttl_expired, Key} ->
+            Timestamp = {erlang:system_time(microsecond), self()},
+            UpdatedDatabase = maps:put(Key, {tombstone, Timestamp}, Database),
+
+            % propagate like delete
             lists:foreach(fun(NeighborPid) -> 
-                NeighborPid ! {silent_delete, Key}
+                NeighborPid ! {silent_delete, Key, Timestamp}
             end, NeighborThreads),
-            lifecycle(Database, NeighborThreads);
+
+            lifecycle(UpdatedDatabase, NeighborThreads);
 
         % delete for propagation
-        {silent_delete, Key} ->
-            UpdatedDatabase = maps:remove(Key, Database),
+        {silent_delete, Key, ComingTimestamp} ->
+            UpdatedDatabase = case maps:find(Key, Database) of
+                {ok, {_OldValue, CurrTimestamp}} when ComingTimestamp < CurrTimestamp ->
+                      Database;
+                _ ->
+                      maps:put(Key, {tombstone, ComingTimestamp}, Database)
+              end,
+
             lifecycle(UpdatedDatabase, NeighborThreads);
 
         % put for propagation
@@ -65,17 +90,8 @@ lifecycle(Database, NeighborThreads) ->
                 _ ->
                   maps:put(Key, {Value, ComingTimestamp}, Database)
             end,
-            lifecycle(UpdatedDatabase, NeighborThreads);
 
-        %  propagate delete
-        {propagate, delete, Key} ->
-            lists:foreach(fun(NeighborPid) -> 
-                if NeighborPid =/= self() ->
-                  NeighborPid ! {silent_delete, Key};
-                  true -> ok
-                end
-            end, NeighborThreads),
-            lifecycle(Database, NeighborThreads);
+            lifecycle(UpdatedDatabase, NeighborThreads);
 
         % stop
         {stop, SenderPid} ->

@@ -2,47 +2,31 @@
 % Incluimos la librería de testing de Erlang
 -include_lib("eunit/include/eunit.hrl").
 
-% ==========================================
-% TEST 1: Operaciones Secuenciales y Errores
-% ==========================================
-% En EUnit, cualquier función que termine en "_test" se ejecuta automáticamente.
+% TEST 1: operaciones secuenciales normales y error por clausula
 basic_operations_test() ->
-    % 1. Iniciamos los nodos
-    {ok, [P1, P2, P3] = Pids} = simple_kv:start_link(3, 50),
+    {ok, [P1, P2] = Pids} = simple_kv:start_link(2, 50),
     
-    % 2. Put en P1
     ?assertEqual(ok, simple_kv:put(P1, color, rojo)),
     
-    % Esperamos unos milisegundos para dar tiempo a la propagación asíncrona
     timer:sleep(10),
     
-    % 3. Get en P2 (Debería tener el valor replicado)
     ?assertEqual({ok, rojo}, simple_kv:get(P2, color)),
     
-    % 4. Delete en P1
     ?assertEqual(ok, simple_kv:delete(P1, color)),
     
-    % Damos tiempo a la propagación del borrado
     timer:sleep(10),
     
-    % 5. Get en P1 (Debería haber desaparecido)
     ?assertEqual(not_found, simple_kv:get(P1, color)),
     
-    % 6. Probar que el TTL negativo genera un error (Crash)
-    % ?assertError captura el crash esperado para que el test no falle
     ?assertError(function_clause, simple_kv:put(P1, x, 1, -5)),
     
-    % 7. Detenemos los procesos
     ?assertEqual(ok, simple_kv:stop(Pids)).
 
-% ==========================================
 % TEST 2: Operaciones Concurrentes
-% ==========================================
 concurrent_writes_test() ->
     {ok, [P1, P2, P3] = Pids} = simple_kv:start_link(3, 50),
     TestPid = self(), % Guardamos el PID del test para recibir confirmaciones
     
-    % Generamos 3 hilos paralelos (clientes) escribiendo al mismo tiempo
     spawn(fun() -> 
         simple_kv:put(P1, color, rojo),
         TestPid ! {done, rojo}
@@ -58,23 +42,47 @@ concurrent_writes_test() ->
         TestPid ! {done, azul}
     end),
 
-    % Sincronizamos: Esperamos a que los 3 hilos terminen de enviar sus puts
     receive {done, _} -> ok end,
     receive {done, _} -> ok end,
     receive {done, _} -> ok end,
 
-    % Damos tiempo para que todos los nodos terminen de cruzarse los mensajes de propagación
     timer:sleep(50),
 
-    % Leemos cómo quedó el estado en cada nodo.
-    % Como bien dijiste, el resultado dependerá de qué mensaje de propagación llegó último a cada buzón.
+    % Todos los valores deberian ser iguales si no hubo ninguna race condition
     {ok, ValorP1} = simple_kv:get(P1, color),
     {ok, ValorP2} = simple_kv:get(P2, color),
     {ok, ValorP3} = simple_kv:get(P3, color),
 
-    % Imprimimos en consola los resultados para analizarlos
-    ?debugFmt("~nResultado concurrente P1: ~p", [ValorP1]),
-    ?debugFmt("Resultado concurrente P2: ~p", [ValorP2]),
-    ?debugFmt("Resultado concurrente P3: ~p", [ValorP3]),
+    ?assertEqual(ValorP1, ValorP2),
+    ?assertEqual(ValorP2, ValorP3),
+
+    % Por si lo quiero imprimir
+    % io:format(user, "~nResultado concurrente P1: ~p~n", [ValorP1]),
+    % io:format(user, "Resultado concurrente P2: ~p~n", [ValorP2]),
+    % io:format(user, "Resultado concurrente P3: ~p~n", [ValorP3]),
 
     simple_kv:stop(Pids).
+
+% TEST 3: prevencion de escritura 'zombie' retrasada
+zombie_data_prevention_test() ->
+    {ok, [P1, P2, P3]} = simple_kv:start_link(3, 50), 
+    
+    Key = color,
+    Value = rojo,
+    
+    % spawn(fun() -> simple_kv:put(P1, Key, Value) end),
+    % spawn(fun() -> simple_kv:delete(P2, Key) end),
+    lists:foreach(fun(_) -> 
+        spawn(fun() -> simple_kv:put(P1, Key, Value) end),
+        spawn(fun() -> simple_kv:delete(P2, Key) end)
+    end, lists:seq(1, 100)),
+
+    timer:sleep(500),
+    
+    P3 ! {get, Key, self()},
+    receive
+        Response ->
+            ?assertEqual(not_found, Response)
+    after 1000 ->
+        ?assert(false) % Falla el test si el nodo no responde
+    end.
