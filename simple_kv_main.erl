@@ -28,7 +28,7 @@ lifecycle(Database, NeighborThreads, Alfa, ValidSize) ->
             end, NeighborThreads),
 
             % Checkea que el tamanio no sea mayor a Alfa y aplica enforce_alpha
-            FinalDatabase = simple_kv:enforce_alpha(UpdatedDatabase, Alfa, NeighborThreads),
+            FinalDatabase = utils:enforce_alpha(UpdatedDatabase, Alfa, NeighborThreads),
             
             % Recalculamos el tamaño de válidos limpio tras el enforce_alpha
             ValidEntries = maps:filter(fun(_K, {tombstone, _TS}) -> false; (_K, {_V, _TS}) -> true end, FinalDatabase),
@@ -38,6 +38,20 @@ lifecycle(Database, NeighborThreads, Alfa, ValidSize) ->
             
         % get
         {get, Key, SenderPid} ->
+            case maps:find(Key, Database) of
+                {ok, {tombstone, _}} ->
+                    SenderPid ! not_found;
+                {ok, {Value, _}} ->
+                    SenderPid ! {ok, Value};
+                error ->
+                    Result = utils:query_neighbors_for_get(Key, NeighborThreads),
+                    SenderPid ! Result
+            end,
+
+            lifecycle(Database, NeighborThreads, Alfa, ValidSize);
+
+        % el mismo get solo que no propaga a otras replicas
+        {get_no_propagate, Key, SenderPid} ->
             case maps:find(Key, Database) of
                 {ok, {tombstone, _}} ->
                     SenderPid ! not_found;
