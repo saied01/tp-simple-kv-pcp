@@ -44,7 +44,7 @@ lifecycle(Database, NeighborThreads, Alfa, ValidSize) ->
                 {ok, {Value, _}} ->
                     {ok, Value};
                 error ->
-                    utils:query_neighbors_for_get(Key, NeighborThreads)
+                    utils:query_neighbors_for_get(Key, NeighborThreads, Ref)
             end,
 
             SenderPid ! {Ref, Result},

@@ -1,5 +1,5 @@
 -module(utils).
--export([send_stop/1, wait_stop/1, create_processes/3, set_neighbor_threads/2, enforce_alpha/3, query_neighbors_for_get/2]).
+-export([send_stop/1, wait_stop/1, create_processes/3, set_neighbor_threads/2, enforce_alpha/3, query_neighbors_for_get/3]).
 
 
 send_stop([]) -> 
@@ -67,24 +67,24 @@ enforce_alpha(Database, Alpha, NeighborThreads) ->
     end.
 
 
-query_neighbors_for_get(Key, Neighbors) ->
+query_neighbors_for_get(Key, Neighbors, QueryRef) ->
     lists:foreach(fun(Pid) -> 
         if Pid =/= self() ->
-            Pid ! {get_no_propagate, Key, self()};
+            Pid ! {get_no_propagate, Key, self(), QueryRef};
             true -> ok
         end
     end, Neighbors),
     
-    collect_responses(length(Neighbors) - 1).
+    collect_responses(QueryRef, length(Neighbors) - 1).
 
-collect_responses(0) ->
+collect_responses(_QueryRef, 0) ->
     not_found;
-collect_responses(N) ->
+collect_responses(QueryRef, N) ->
     receive
-        {ok, Value} ->
+        {QueryRef, {ok, Value}} ->
             {ok, Value};
-        not_found ->
-            collect_responses(N - 1)
-    after 50 -> % Timeout de seguridad para no bloquear el nodo indefinidamente
-        collect_responses(N - 1)
+        {QueryRef, not_found} ->
+            collect_responses(QueryRef, N - 1)
+    after 50 -> % Timeout de seguridad
+        collect_responses(QueryRef, N - 1)
     end.
