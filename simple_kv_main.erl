@@ -15,7 +15,7 @@ lifecycle(Database, NeighborThreads, Alfa, ValidSize) ->
             SenderPid ! {Ref, ok},
 
             if TTL =/= infinity ->
-                erlang:send_after(TTL, self(), {ttl_expired, Key});
+                erlang:send_after(TTL, self(), {ttl_expired, Key, Timestamp});
                true -> ok
             end,
 
@@ -93,21 +93,33 @@ lifecycle(Database, NeighborThreads, Alfa, ValidSize) ->
             lifecycle(UpdatedDatabase, NeighborThreads, Alfa, NewSize);
 
         % delete after ttl expiration
-        {ttl_expired, Key} ->
-            WasValidValue = case maps:get(Key, Database, not_found) of
-                {tombstone, _} -> false;
-                not_found -> false;
-                _ -> true
-            end,
-            
-            Timestamp = {erlang:system_time(microsecond), self()},
-            UpdatedDatabase = maps:put(Key, {tombstone, Timestamp}, Database),
-            NewSize = if WasValidValue -> ValidSize - 1; true -> ValidSize end,
+        {ttl_expired, Key, TimerTimestamp} ->
+            {UpdatedDatabase, NewSize} = case maps:find(Key, Database) of
+                {ok, {_Val, TimerTimestamp}} ->
+                    WasValidValue = case maps:get(Key, Database, not_found) of
+                        {tombstone, _} -> false;
+                        not_found -> false;
+                        _ -> true
+                    end,
+                    
+                    Timestamp = {erlang:system_time(microsecond), self()},
+                    NewDb = maps:put(Key, {tombstone, Timestamp}, Database),
+                    Size = if WasValidValue -> ValidSize - 1; true -> ValidSize end,
 
-            % propagate like delete
-            lists:foreach(fun(NeighborPid) -> 
-                NeighborPid ! {silent_delete, Key, Timestamp}
-            end, NeighborThreads),
+                    % Propagamos el borrado
+                    lists:foreach(fun(NeighborPid) -> 
+                        if NeighborPid =/= self() ->
+                            NeighborPid ! {silent_delete, Key, Timestamp};
+                           true -> ok
+                        end
+                    end, NeighborThreads),
+
+                    {NewDb, Size};
+
+                _ ->
+                  % If Timestamp does not match, then it ignores TTL
+                    {Database, ValidSize}
+            end,
 
             lifecycle(UpdatedDatabase, NeighborThreads, Alfa, NewSize);
     
