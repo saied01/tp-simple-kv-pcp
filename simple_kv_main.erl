@@ -5,6 +5,7 @@ lifecycle(Database, NeighborThreads, Alfa, ValidSize) ->
     receive
         % set neighbors
         {set_neighbor_threads, Pids} ->
+            erlang:send_after(60000, self(), tombstone_cleanup),
             lifecycle(Database, Pids, Alfa, ValidSize);
 
         % put
@@ -122,7 +123,25 @@ lifecycle(Database, NeighborThreads, Alfa, ValidSize) ->
             end,
 
             lifecycle(UpdatedDatabase, NeighborThreads, Alfa, NewSize);
-    
+        % Limpieza periódica de tombstones antiguas
+        % si la tombstone es muy reciente no se borra por seguridad
+        tombstone_cleanup ->
+            Now = erlang:system_time(microsecond),
+            GracePeriod = 60000 * 1000,
+
+            CleanedDatabase = maps:filter(fun(_Key, Entry) ->
+                case Entry of
+                    {tombstone, {TSTime, _Pid}} ->
+                        (Now - TSTime) < GracePeriod;
+                    _ ->
+                        true
+                end
+            end, Database),
+
+            erlang:send_after(60000, self(), tombstone_cleanup),
+
+            lifecycle(CleanedDatabase, NeighborThreads, Alfa, ValidSize);
+
         % cuando un valor es borrado por alfa, se ofrece al resto, este lo acepta si puede y si no lo tiene ya
         {offer_key_value, Key, OfferedValue, OfferedTS} ->
             case maps:find(Key, Database) of
