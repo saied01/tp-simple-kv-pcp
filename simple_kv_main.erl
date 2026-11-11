@@ -71,14 +71,16 @@ lifecycle(Database, NeighborThreads, Alfa, ValidSize) ->
         {delete, Key, SenderPid, Ref} ->
             Timestamp = {erlang:system_time(microsecond), self()},
             
-            % Si borramos un valor vigente, disminuimos el ValidSize
             WasValidValue = case maps:get(Key, Database, not_found) of
                 {tombstone, _} -> false;
                 not_found -> false;
                 _ -> true
             end,
             
-            UpdatedDatabase = maps:put(Key, {tombstone, Timestamp}, Database),
+            UpdatedDatabase = if 
+                WasValidValue -> maps:put(Key, {tombstone, Timestamp}, Database); 
+                true -> Database 
+            end,
             NewSize = if WasValidValue -> ValidSize - 1; true -> ValidSize end,
             
             SenderPid ! {Ref, ok},
